@@ -1,0 +1,173 @@
+#!/system/bin/sh
+#Thanks Kanagawa Yamada @Rem01Gaming
+# $1: Value $2: Directory
+write_val()
+{
+    if [ -e "$2" ]; then
+        if [ ! -w "$2" ]; then
+            chmod +w "$2"
+        fi
+        echo "$1" > "$2"
+    else
+        echo " '$2': No Such File or Directory!" > "$LOGS"
+    fi
+}
+
+# $1: Value $2: Directory
+apply()
+{
+    if [ -e "$2" ]; then
+        chmod 0664 "$2"
+        echo "$1" > "$2"
+        chmod 0444 "$2"
+    else
+        echo " '$2': No Such File or Directory!" > "$LOGS"
+    fi
+}
+
+# Set CPU Governor ke schedutil untuk semua core
+for path in /sys/devices/system/cpu/cpu*/cpufreq; do
+    write_val "schedutil" "$path/scaling_governor"
+done
+
+#  max dan min frekuensi
+for path in /sys/devices/system/cpu/cpufreq/policy*; do
+    max_freq=$(cat "$path/cpuinfo_max_freq")
+    min_freq=$(cat "$path/cpuinfo_min_freq")
+    write_val "$max_freq" "$path/scaling_max_freq"
+    write_val "$min_freq" "$path/scaling_min_freq"
+done
+
+# GPU Frequency
+min=$(cat /proc/gpufreq/gpufreq_opp_dump | grep -oE 'freq = [0-9]+' | grep -oE '[0-9]+' | sort -n | head -1)
+write_val "$min" "/proc/gpufreq/gpufreq_opp_freq"
+write_val "0" "/sys/devices/platform/13040000.mali/power_policy"
+
+	
+	if [ -d /proc/gpufreq ]; then
+	tweak 0 /proc/gpufreq/gpufreq_opp_freq
+elif [ -d /proc/gpufreqv2 ]; then
+	tweak -1 /proc/gpufreqv2/fix_target_opp_index
+    tweak enable /proc/gpufreqv2/aging_mode
+fi
+
+
+	# GPU Power limiter
+	[ -f "/proc/gpufreq/gpufreq_power_limited" ]
+		for setting in ignore_batt_oc ignore_batt_percent ignore_low_batt ignore_thermal_protect ignore_pbm_limited; do
+			apply "$setting 0" /proc/gpufreq/gpufreq_power_limited
+		done
+	
+# PPM
+ if [ -d /proc/ppm ]; then
+	cluster=0
+	for path in /sys/devices/system/cpu/cpufreq/policy*; do
+		cpu_maxfreq=$(cat $path/cpuinfo_max_freq)
+		cpu_minfreq=$(cat $path/cpuinfo_min_freq)
+		tweak "$cluster $cpu_maxfreq" /proc/ppm/policy/hard_userlimit_max_cpu_freq
+		tweak "$cluster $cpu_minfreq" /proc/ppm/policy/hard_userlimit_min_cpu_freq
+		((cluster++))
+	done
+	fi
+
+
+# CPU thermal throttling
+chmod 644 /sys/devices/virtual/thermal/thermal_message/cpu_limits
+for path in /sys/devices/system/cpu/*/cpufreq; do
+		cpu_maxfreq=$(cat $path/cpuinfo_max_freq)
+		cpu_minfreq=$(cat $path/cpuinfo_min_freq)
+		tweak "$cpu_maxfreq" $path/scaling_max_freq
+		tweak "$cpu_minfreq" $path/scaling_min_freq
+	done
+	
+# Disable GPU Power Limiter
+if [ -f "/proc/gpufreq/gpufreq_power_limited" ]; then
+    for setting in ignore_batt_oc ignore_batt_percent ignore_low_batt ignore_thermal_protect ignore_pbm_limited; do
+        echo "$setting 0" > /proc/gpufreq/gpufreq_power_limited
+    done
+fi
+
+apply "-1" /sys/devices/platform/10012000.dvfsrc/helio-dvfsrc/dvfsrc_req_ddr_opp
+	apply "-1" /sys/kernel/helio-dvfsrc/dvfsrc_force_vcore_dvfs_opp
+	apply "userspace" /sys/class/devfreq/mtk-dvfsrc-devfreq/governor
+	apply "userspace" /sys/devices/platform/soc/1c00f000.dvfsrc/mtk-dvfsrc-devfreq/devfreq/mtk-dvfsrc-devfreq/governor
+	
+# FPSGO
+for fps in /sys/kernel/fpsgo; do
+    echo "1" > "$fps/common/fpsgo_enable"
+    echo "1" > "$fps/common/force_onoff"
+    echo "1" > "$fps/fbt/boost_ta"
+    echo "0" > "$fps/fbt/switch_idleprefer"
+    echo "1" > "$fps/fbt/enable_switch_sync_flag"
+    echo "0" > "$fps/fbt/enable_switch_down_throttle"
+    echo "100" > "$fps/fbt/light_loading_policy"
+    echo "1" > "$fps/minitop/enable"
+    echo "100" > "$fps/minitop/thrs_heavy"
+    echo "1" > "$fps/fstb/margin_mode"
+    echo "30" > "$fps/fstb/fstb_tune_window_size"
+    echo "15" > "$fps/fstb/fstb_tune_quantile"
+    echo "1" > "$fps/fstb/margin_mode_dbnc_a"
+    echo "1" > "$fps/fstb/margin_mode_dbnc_b"
+    echo "0" > "$fps/fstb/fstb_debug"
+    echo "101" > "$fps/common/gpu_block_boost"
+done
+
+
+# Foreground
+for FG in /dev/stune/foreground; do
+    echo "1024" > "$FG/schedtune.util.max"
+    echo "0" > "$FG/schedtune.util.min"
+    echo "1" > "$FG/schedtune.boost"
+    echo "1" > "$FG/schedtune.prefer_idle"
+done
+
+# Top-App
+for TA in /dev/stune/top-app; do
+    echo "1024" > "$TA/schedtune.util.max"
+    echo "0" > "$TA/schedtune.util.min"
+    echo "1" > "$TA/schedtune.boost"
+    echo "1" > "$TA/schedtune.prefer_idle"
+done
+
+# Global
+for GL in /dev/stune; do
+    echo "1024" > "$GL/schedtune.util.max"
+    echo "0" > "$GL/schedtune.util.min"
+    echo "1" > "$GL/schedtune.boost"
+    echo "1" > "$GL/schedtune.prefer_idle"
+done
+
+# Optimasi Performa Tanpa Boros (Boost 30% Lebih Rendah)
+apply "5" > /proc/perfmgr/boost_ctrl/eas_ctrl/sched_stune_task_thresh
+apply "70" > /proc/perfmgr/boost_ctrl/eas_ctrl/perfserv_fg_boost
+apply "70" > /proc/perfmgr/boost_ctrl/eas_ctrl/perfserv_ta_boost
+apply "50" > /proc/perfmgr/boost_ctrl/eas_ctrl/perfserv_bg_boost
+apply "0" > /sys/module/fbt_cpu/parameters/floor_bound
+apply "15" > /sys/module/fbt_cpu/parameters/kmin
+apply "70" > /sys/module/fbt_cpu/parameters/variance
+apply "0" > /proc/perfmgr/boost_ctrl/dram_ctrl/ddr
+apply "12" > /sys/module/fbt_cpu/parameters/bhr_opp
+apply "4" > /sys/module/fbt_cpu/parameters/bhr
+apply "700" > /proc/perfmgr/boost_ctrl/eas_ctrl/m_sched_migrate_cost_n
+apply "5" > /proc/perfmgr/boost_ctrl/eas_ctrl/perfserv_uclamp_min
+apply "5" > /proc/perfmgr/boost_ctrl/eas_ctrl/perfserv_bg_uclamp_min
+apply "5" > /proc/perfmgr/boost_ctrl/eas_ctrl/perfserv_fg_uclamp_min
+apply "5" > /proc/perfmgr/boost_ctrl/eas_ctrl/perfserv_ta_uclamp_min
+apply "1" > /proc/perfmgr/boost_ctrl/eas_ctrl/perfserv_schedplus_down_throttle
+apply "1" > /proc/perfmgr/boost_ctrl/eas_ctrl/perfserv_schedplus_sync_flag
+apply "75" > /sys/kernel/ged/hal/dvfs_margin_value
+apply "70" > /sys/module/fbt_cpu/parameters/rescue_enhance_f
+apply "70" > /sys/module/fbt_cpu/parameters/rescue_percent
+apply "1" > /proc/perfmgr/boost_ctrl/eas_ctrl/perfserv_schedplus_up_throttle
+
+# Optimasi CPU Secara Global
+for param in /sys/module/fbt_cpu/parameters/*; do
+    apply "70" > "$param/rescue_enhance_f"
+    apply "70" > "$param/rescue_percent"
+    apply "0" > "$param/floor_bound"
+    apply "15" > "$param/kmin"
+    apply "70" > "$param/variance"
+    apply "12" > "$param/bhr_opp"
+    apply "4" > "$param/bhr"
+done
+

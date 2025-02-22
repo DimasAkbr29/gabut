@@ -1,0 +1,66 @@
+#!/system/bin/sh
+
+LOG=/data/media/0/Android/Mode-Log.txt
+status=/data/adb/modules/Gabut/status
+MAINDIR=/data/adb/modules/Gabut
+
+Daily_Mode() {
+    Daily
+}
+
+Game_Mode() {
+    Game
+}
+
+focused_mode() {
+    while IFS= read -r game; do
+        for pid in $(pidof "$game"); do
+            ionice -c 1 -n 0 -p "$pid"
+            renice -n -20 -p "$pid"  
+            chrt -f -p 99 "$pid"
+        done
+    done < /data/adb/modules/Gabut/game.txt
+}
+
+
+toast_start(){
+    am start -a android.intent.action.MAIN -e toasttext "Game Mode.." -n bellavita.toast/.MainActivity
+}
+
+toast_end(){
+    am start -a android.intent.action.MAIN -e toasttext "Daily Mode.." -n bellavita.toast/.MainActivity
+}
+
+List=$(cat $MAINDIR/game.txt)
+
+echo "daily" > $status
+
+while true; do
+    sleep 3
+    mode=$(cat $status)
+    if [ $(dumpsys window windows | grep package | head -n 34 | grep -o -e "$List" | head -n 1) ]; then
+        if [ ! "$mode" == "game" ]; then
+            toast_start
+            Game_Mode
+            focused_mode
+            
+            printf "game" > $status
+            
+            date >> "$LOG"
+            echo "Gabut Game Mode Active" >> "$LOG"
+            echo "" >> "$LOG"
+        fi
+    else
+        if [ ! "$mode" == "daily" ]; then
+            toast_end
+            Daily_Mode
+            
+            printf "daily" > $status
+            
+            date >> "$LOG"
+            echo "Gabut Daily Mode Active" >> "$LOG"
+            echo "" >> "$LOG"
+        fi
+    fi
+done
+            
